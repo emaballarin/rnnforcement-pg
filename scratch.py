@@ -1,45 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from gridworld import GridWorld
+from environments.tmaze import TMaze
 
-pippo = GridWorld(
-    2,
-    3,
-    (),
-    {(1, 1): 100},
-    (),
-    sparse_rew_map=True,
-    sparse_obs_map=True,
-    sparse_goals_map=True,
-    do_validate=True,
-    pedantic_validate=True,
-    api_validate=True,
-    reward_on_wall_hit=-10,
-)
+mytmaze = TMaze(100, -100, 5, "up", -1, -5, False)
 
-print(pippo.state)
-pippo.take_action_string("north")
-print(pippo.state)
-pippo.take_action_string("north")
-print(pippo.state)
-pippo.take_action_string("north")
-print(pippo.state)
-pippo.take_action_string("north")
-print(pippo.state)
-pippo.take_action_string("east")
-print(pippo.state)
-pippo.take_action_string("east")
-print(pippo.state)
-pippo.take_action_string("east")
-print(pippo.state)
-pippo.take_action_string("east")
-print(pippo.state)
-pippo.take_action_string("east")
-print(pippo.state)
-pippo.take_action_string("east")
-print(pippo.state)
-pippo.take_action_string("east")
-print(pippo.state)
-pippo.take_action_string("east")
-print(pippo.state)
+print(mytmaze.state_bwa)
+mytmaze.take_action(3)
+mytmaze.take_action(3)
+mytmaze.take_action(3)
+mytmaze.take_action(3)
+mytmaze.take_action(3)
+mytmaze.take_action(3)
+print(mytmaze.gameover)
+mytmaze.take_action(0)
+print(mytmaze.gameover)

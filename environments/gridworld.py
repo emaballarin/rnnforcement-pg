@@ -6,7 +6,7 @@
 #
 
 # Imports
-from typing import Tuple, Union
+from typing import Tuple, Union, Optional
 from functools import cached_property
 
 # Custom types
@@ -256,12 +256,14 @@ class GridWorld:
         else:
             self._rewards_map = rewards_map
 
+        self._default_rew_if_sparse = default_rew_if_sparse
         self._reward_on_wall_hit = reward_on_wall_hit
 
         # Instantiate mutable properties of the Gridworld (state & related)
 
         self._timestep: realnum = init_time
         self._last_action: Union[None, int] = None
+        self._last_position: Optional[Tuple[int, int]] = None
         self._position: Tuple[int, int] = init_position
         self._instant_reward: realnum = init_reward
         self._cumul_reward: realnum = init_reward
@@ -306,20 +308,16 @@ class GridWorld:
         return self._cumul_reward
 
     @property
-    def state(self) -> Tuple[Tuple[int, int], realnum, realnum]:
-        return self.position, self.instant_reward, self.cumul_reward
-
-    @property
-    def state_trimmed(self) -> Tuple[Tuple[int, int], realnum]:
-        return self.position, self.instant_reward
-
-    @property
     def timestep(self) -> int:
         return self._timestep
 
     @property
-    def last_action_number(self) -> int:
+    def last_action_number(self) -> Optional[int]:
         return self._last_action
+
+    @property
+    def last_position(self) -> Optional[Tuple[int, int]]:
+        return self._last_position
 
     @property
     def last_action_string(self) -> str:
@@ -331,6 +329,7 @@ class GridWorld:
 
     # Auxiliary methods
     def _check_for_obstacles_and_update_position(self, proposal):
+        self._last_position = self._position
         if self._sparse_obstacles:
             if proposal not in self._obstacles_map:
                 self._position = proposal
@@ -365,7 +364,7 @@ class GridWorld:
 
     def _go_west(self):
         proposal = (self.position[0] - 1, self.position[1])
-        if proposal[1] >= 0:
+        if proposal[0] >= 0:
             self._check_for_obstacles_and_update_position(proposal)
         else:
             self._instant_reward += self._reward_on_wall_hit
@@ -373,6 +372,8 @@ class GridWorld:
     def _check_for_reward_and_update_rewards(self):
         if self._sparse_rewards and self.position in self._rewards_map:
             self._instant_reward += self._rewards_map.get(self.position)
+        elif self._sparse_rewards and self.position not in self._rewards_map:
+            self._instant_reward += self._default_rew_if_sparse
         elif (
             not self._sparse_rewards
             and self._rewards_map[self.position[0]][self.position[1]] != 0
