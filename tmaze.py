@@ -101,8 +101,8 @@ class TMaze:
             sparse_goals_map=True,
             allow_still=allow_still,
             reward_on_wall_hit=wall_penalty,
-            pedantic_validate=True,
-            api_validate=True,
+            pedantic_validate=False,
+            api_validate=False,
         )
 
     # AUXILIARY
