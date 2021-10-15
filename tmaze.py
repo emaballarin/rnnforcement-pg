@@ -122,11 +122,14 @@ class TMaze:
             raise RuntimeError("World has collapsed! Invalid position detected!")
 
         elif self._gw.position[0] == 0:
-            return 1, 0, 0, 0
+            if self._alley_len == 1:
+                return 1, 1, 0, 0
+            else:
+                return 0, 0, 0, 1
         elif self._gw.position[0] == self._alley_len - 1:
-            return 0, 1, 1, 1
+            return 1, 1, 1, 0
         else:
-            return 1, 0, 1, 0
+            return 0, 0, 1, 1
 
     @property
     def _signal(self) -> int:
@@ -139,7 +142,7 @@ class TMaze:
 
     @cached_property
     def allowed_actions(
-        self
+        self,
     ) -> Union[Tuple[int, int, int, int, int], Tuple[int, int, int, int]]:
         return self._gw.allowed_action_numbers
 
