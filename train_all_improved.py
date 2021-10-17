@@ -14,8 +14,7 @@ from torch import Tensor
 from torch.nn import Module, LSTMCell
 import torch.nn.functional as F
 
-from ebtorch.nn import SGRUHCell
-from ebtorch.optim import MADGRAD
+from ebtorch.optim import MADGRAD  # Facebook's MADGRAD with Nestor Demeure's tweaks
 
 from tmaze import TMaze
 from util import SimpleSumAverager
@@ -28,34 +27,40 @@ realnum = Union[float, int]
 # ---- AGENT/ENVIRONMENT INSTANTIATION ----
 # Prototypical instance (used to get only state/action meta-information)
 proto_tmaze: TMaze = TMaze(0, 0, 2, "up", 0, 0, False)
-howmany_actions: int = len(proto_tmaze.allowed_actions)
-howmany_percepts: int = len(proto_tmaze.percepts)
 
 
 # ---- AGENT/ENVIRONMENT SETTINGS ----
-REW_PLUS: realnum = 4.0
-REW_MINUS: realnum = -0.1
-REW_WALK: realnum = -0.0025
-REW_WALL: realnum = -0.0025
+REW_PLUS: realnum = 4.0  # As in original paper
+REW_MINUS: realnum = -0.1  # As in original paper
+REW_WALK: realnum = (
+    -0.0025
+)  # Improvement: reduce length of solutions / faster convergence
+REW_WALL: realnum = (
+    -0.0025
+)  # Improvement: reduce length of solutions / faster convergence (not used in the "only legal moves allowed" scenario)
 MIN_ALLEY_LEN: int = 1
-MAX_ALLEY_LEN: int = 2
+MAX_ALLEY_LEN: int = 8
 ALLOW_STILL: bool = False
 
 
 # ---- TRAINING SETTINGS ----
-NUM_OF_EPOCHS: int = 100000
-STINTS_PER_EPOCH: int = 1
-GAMES_PER_STINT: int = 20
+NUM_OF_EPOCHS: int = (
+    100000  # Approximation of infinite-epochs regime: stop only on successful training
+)
+STINTS_PER_EPOCH: int = (
+    1  # stint == epoch unless we want to collect different statistics, or schedule LR
+)
+GAMES_PER_STINT: int = 20  # As in original paper
 # MOVES_HARD_LIMIT: int = CURRENT_ALLEY_LEN * 1000000  # min(10 * CURRENT_ALLEY_LEN, 1000)
-DISCOUNT: float = 0.98
-REPLICAS = 2
+DISCOUNT: float = 0.98  # As in original paper
+REPLICAS = 5
 
 # ---- TRACKERS ----
-gamewise = SimpleSumAverager()  # Gamewise reward
-stintwise = SimpleSumAverager()  # Stintwise reward
-epochwise = SimpleSumAverager()  # Epochwise reward
-avgmoves = SimpleSumAverager()
-avgrew = SimpleSumAverager()
+gamewise = SimpleSumAverager()  # For internal bookkeeping
+stintwise = SimpleSumAverager()  # For internal bookkeeping
+epochwise = SimpleSumAverager()  # For internal bookkeeping
+avgmoves = SimpleSumAverager()  # For graphing
+avgrew = SimpleSumAverager()  # For graphing
 
 SILENT_MOVES: bool = True
 SILENT_GAMES: bool = True
@@ -64,50 +69,59 @@ SILENT_EPOCHS: bool = True
 
 
 # ---- DEVICE HANDLING ----
-AUTODETECT: bool = False
+AUTODETECT: bool = False  # No great benefit in running on GPU (TODO: transition to CUDNN sequence-wise RNN implementation for very long games)
 device = th.device("cuda" if th.cuda.is_available() and AUTODETECT else "cpu")
 
 
-# ---- TRAINING LOOP ----
+# ---- TRAINING LOOP(S) ----
+
+# "Open-loop" approach preferred for easier hackability
+# TODO: functionalize training
+# TODO: Build a proper dataset/loader if going for (ev. partially) off-policy learning
 
 
-# Loop over alley lengths
+# Loop over alley lengths (for automated graphing)
 for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
 
-    all_replicas_rew = []
-    all_replicas_mov = []
+    all_replicas_rew = []  # To-be time series to plot
+    all_replicas_mov = []  # To-be time series to plot
 
-    # Loop over replicas
+    # Loop over replicas (for automated graphing)
     replica_nr: int
     for replica_nr in range(REPLICAS):
 
+        # Not strictly needed, since some trackers are reset afterwards; here for extra caution
         gamewise.reset()
         stintwise.reset()
         epochwise.reset()
         avgmoves.reset()
         avgrew.reset()
 
-        single_replica_rew = []
-        single_replica_mov = []
-
-        # <> <> <> <> <> <> <> <> <> <> <> <> <> <> <> <> <> <> <> <> <> <> <> <
+        single_replica_rew = []  # To-be time series to plot (single replica)
+        single_replica_mov = []  # To-be time series to plot (single replica)
 
         # Properly instantiate the replica
 
         # ---- MODEL DEFINITION ----
 
         # <><><> Baseline <><><>
+        # Here in their simplest form: 1-layer-deep (depth-wise), sized for dense representation learning (since we assume the "only legal moves scenario")
         baseline_cell = LSTMCell(
-            howmany_percepts + howmany_actions, howmany_actions, bias=True
+            len(proto_tmaze.percepts) + len(proto_tmaze.allowed_actions),
+            len(proto_tmaze.allowed_actions),
+            bias=True,
         )
 
         # <><><> Policy <><><>
-        policy_cell = LSTMCell(howmany_percepts, howmany_actions, bias=True)
+        # Here in their simplest form: 1-layer-deep (depth-wise), sized for dense representation learning (since we assume the "only legal moves scenario")
+        policy_cell = LSTMCell(
+            len(proto_tmaze.percepts), len(proto_tmaze.allowed_actions), bias=True
+        )
 
-        # <><><> Utility <><><>
+        # <><><> Shorthands <><><>
         baseline_modules: List[Module] = [baseline_cell]
         policy_modules: List[Module] = [policy_cell]
-        recurrent_modules: List[SGRUHCell] = [baseline_cell, policy_cell]
+        recurrent_modules: List[Module] = [baseline_cell, policy_cell]
         all_modules: List[Module] = baseline_modules + policy_modules
 
         # ---- PREPARE FOR TRAINING ----
@@ -136,8 +150,8 @@ for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
                 avgmoves.reset()
                 avgrew.reset()
 
-                BASELINE_OPTIM.zero_grad()
-                POLICY_OPTIM.zero_grad()
+                BASELINE_OPTIM.zero_grad()  # Accumulate gradient from now on...
+                POLICY_OPTIM.zero_grad()  # Accumulate gradient from now on...
 
                 # Loop over games
                 game_nr: int
@@ -146,8 +160,8 @@ for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
                     gamewise.reset()
 
                     # Break the computational graph in BPTT for RNNs (i.e. new-game signal)
-                    no_h0c0 = True
-                    no_h0c00 = True
+                    no_h0c0 = True  # i.e. initialize hidden states to zero
+                    no_h0c00 = True  # i.e. initialize hidden states to zero
 
                     if not SILENT_GAMES:
                         print(
@@ -187,7 +201,6 @@ for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
                     policy_bw: List[Tensor] = []
 
                     # Loop over subsequent moves
-                    # while move_idx < MOVES_HARD_LIMIT - 1 and not train_game.gameover:
                     while not train_game.gameover:
                         move_idx += 1
 
@@ -220,14 +233,15 @@ for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
                         )
                         legal_dist = legal_dist / legal_dist.sum()
                         est_action: int = np.random.choice(
-                            np.arange(0, howmany_actions),
+                            np.arange(0, len(proto_tmaze.allowed_actions)),
                             p=legal_dist.detach().cpu().numpy(),
                         ).item()
 
                         # Convert such action to one-hot
                         est_action_onehot: Tensor = (
                             F.one_hot(
-                                th.tensor(est_action), num_classes=howmany_actions
+                                th.tensor(est_action),
+                                num_classes=len(proto_tmaze.allowed_actions),
                             )
                             .reshape(1, -1)
                             .float()
@@ -250,6 +264,7 @@ for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
                                 (est_return, c00),
                             )
 
+                        # Improvement: since we know return range, enforce that!
                         est_return_ = 4.1 * th.sigmoid(est_return[0].sum()) - 0.1
                         est_return_ = est_return_.reshape(1)
 
@@ -261,7 +276,7 @@ for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
 
                         # Gather required elements from the game...
                         rewards.append(train_game.reward)
-                        # ... and from the graph
+                        # ... and from the computational graph of the RNNs
                         baseline_bw.append(est_return_)
                         policy_bw.append(th.log(legal_dist[est_action]))
 
@@ -278,9 +293,9 @@ for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
                         print("")
                     stintwise.consider(gamewise.sum)
                     avgrew.consider(gamewise.sum)
-                    avgmoves.consider(train_game._gw.timestep)
+                    avgmoves.consider(train_game.timestep)
 
-                    # Convert rewards to returns
+                    # Convert rewards to returns (as in the paper)
                     returns: List[realnum] = []
                     i: int
                     for i in range(len(rewards)):
@@ -290,8 +305,10 @@ for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
                             return_i += rewards[j] * (DISCOUNT ** j)
                         returns.append(return_i)
 
-                    # ---- PLAY GAME BACKWARD ----
+                    # ---- PLAY GAME BACKWARDS ----
+                    # Necessary (w.r.t. to out-of-loop) to ensure random sampling is not re-done
 
+                    # A sanity check, run with python -O to suppress
                     assert (
                         len(rewards)
                         == len(returns)
@@ -316,20 +333,26 @@ for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
                             * (new_return.detach() - baseline_bw[move_idx].detach())
                         )
 
-                        # Backwards (i.e. gradient accumulation)
-                        baseline_loss.backward(retain_graph=True)
-                        policy_loss.backward(retain_graph=True)
-
-                    # Game over (BACKWARD)
+                        # Backward pass (i.e. gradient accumulation)
+                        baseline_loss.backward(
+                            retain_graph=True
+                        )  # Graph retention necessary
+                        policy_loss.backward(
+                            retain_graph=True
+                        )  # Graph retention necessary
 
                 # The stint is over: update policy weights!
 
                 single_replica_rew.append(avgrew.average)
                 single_replica_mov.append(avgmoves.average)
 
-                th.nn.utils.clip_grad_norm_(baseline_cell.parameters(), 0.3)
+                th.nn.utils.clip_grad_norm_(
+                    baseline_cell.parameters(), 0.3
+                )  # Also valid: clip at 3rd quartile (e.g. with https://github.com/emaballarin/ebtorch/blob/main/ebtorch/nn/utils/autoclip.py)
                 BASELINE_OPTIM.step()
-                th.nn.utils.clip_grad_norm_(policy_cell.parameters(), 0.3)
+                th.nn.utils.clip_grad_norm_(
+                    policy_cell.parameters(), 0.3
+                )  # Also valid: clip at 3rd quartile (e.g. with https://github.com/emaballarin/ebtorch/blob/main/ebtorch/nn/utils/autoclip.py)
                 POLICY_OPTIM.step()
                 if not SILENT_STINTS:
                     print(
@@ -357,7 +380,7 @@ for alley_len_iter in range(MIN_ALLEY_LEN, MAX_ALLEY_LEN + 1):
                     print("Training successful; stopping...")
                 break
 
-        # Single replica has finished training epochs
+        # Single replica has finished training
         all_replicas_rew.append(single_replica_rew)
         all_replicas_mov.append(single_replica_mov)
 

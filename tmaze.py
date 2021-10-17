@@ -5,13 +5,13 @@
 # tmaze.py | T-Maze RL environment as a structured GridWorld
 #
 
-# Imports
+# ---- IMPORTS ----
 from typing import List, Tuple, Union, Dict
 from functools import cached_property
 
 from gridworld import GridWorld
 
-# Custom types
+# ---- CUSTOM TYPES ----
 realnum = Union[float, int]
 
 # Auxiliary functions
@@ -183,3 +183,7 @@ class TMaze:
     @property
     def gameover(self):
         return self._gw.gameover
+
+    @property
+    def timestep(self):
+        return self._gw.timestep

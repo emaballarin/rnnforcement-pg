@@ -5,15 +5,15 @@
 # gridworld.py | A minimal GirdWorld environment with robustness in mind
 #
 
-# Imports
+# ---- IMPORTS ----
 from typing import Tuple, Union, Optional
 from functools import cached_property
 
-# Custom types
+# ---- CUSTOM TYPES ----
 realnum = Union[float, int]
 
 
-# Auxiliary functions
+# ---- AUXILIARY FUNCTIONS ----
 def _sparsify_to_tuple(denserep, defaultval) -> tuple:
     temp = list()
     for idxa in range(len(denserep)):
